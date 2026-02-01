@@ -89,6 +89,8 @@ class PostureApp(QWidget):
             color = (0, 255, 0)
         elif posture == "BAD":
             color = (0, 0, 255)
+        elif posture == "HOLD":
+            color = (0, 165, 255)  # نارنجی
         else:
             color = (200, 200, 200)
 
