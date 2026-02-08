@@ -8,41 +8,42 @@ mp_pose = mp.solutions.pose
 
 class PostureDetector:
     def __init__(self, min_detection_confidence=0.5, min_tracking_confidence=0.5, calibration_time=3):
+
         self.pose = mp_pose.Pose(
             min_detection_confidence=min_detection_confidence,
             min_tracking_confidence=min_tracking_confidence
         )
 
-        # --- Calibration Base Values ---
         self.calibrated = False
-        self.base_forward = 0.1
-        self.base_shoulder_diff = 0.02
+
         self.base_yaw = 0.02
         self.base_pitch = 0.05
+        self.base_forward = 0.1
+        self.base_shoulder_diff = 0.02
 
         self.calibration_time = calibration_time
 
-        # --- Stability Tracking ---
-        self.last_state = "UNKNOWN"
-        self.candidate_state = None
-        self.state_start_time = time.time()
-        self.hold_time = 1.0  # seconds required to confirm posture
-
     def get_point(self, landmarks, idx):
         try:
-            return np.array([landmarks[idx].x, landmarks[idx].y])
+            p = landmarks[idx]
+            return np.array([p.x, p.y])
         except:
             return None
 
     def calibrate(self, frame):
         start = time.time()
-        yaw_list, pitch_list, forward_list, shoulder_list = [], [], [], []
+
+        yaw_list = []
+        pitch_list = []
+        forward_list = []
+        shoulder_list = []
 
         while time.time() - start < self.calibration_time:
+
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             res = self.pose.process(rgb)
 
-            if not res.pose_landmarks:
+            if res.pose_landmarks is None:
                 continue
 
             lm = res.pose_landmarks.landmark
@@ -61,10 +62,17 @@ class PostureDetector:
             forward_list.append(np.linalg.norm(nose - shoulder_mid))
             shoulder_list.append(abs(l_shoulder[1] - r_shoulder[1]))
 
-        if yaw_list: self.base_yaw = np.mean(yaw_list)
-        if pitch_list: self.base_pitch = np.mean(pitch_list)
-        if forward_list: self.base_forward = np.mean(forward_list)
-        if shoulder_list: self.base_shoulder_diff = np.mean(shoulder_list)
+        if len(yaw_list) > 0:
+            self.base_yaw = float(np.mean(yaw_list))
+
+        if len(pitch_list) > 0:
+            self.base_pitch = float(np.mean(pitch_list))
+
+        if len(forward_list) > 0:
+            self.base_forward = float(np.mean(forward_list))
+
+        if len(shoulder_list) > 0:
+            self.base_shoulder_diff = float(np.mean(shoulder_list))
 
         self.calibrated = True
 
@@ -75,7 +83,7 @@ class PostureDetector:
 
             result = {"posture": "UNKNOWN", "score": 0.0, "confidence": 0.0}
 
-            if not res.pose_landmarks:
+            if res.pose_landmarks is None:
                 return result
 
             lm = res.pose_landmarks.landmark
@@ -89,22 +97,21 @@ class PostureDetector:
 
             shoulder_mid = (l_shoulder + r_shoulder) / 2
 
-            # --- Motion Metrics ---
-            yaw = abs(nose[0] - shoulder_mid[0])             # Left / Right tilt
-            pitch = abs(nose[1] - shoulder_mid[1])           # Up / Down tilt
-            forward_head = np.linalg.norm(nose - shoulder_mid)  # Forward lean
-            shoulder_diff = abs(l_shoulder[1] - r_shoulder[1])  # Shoulder tilt
+            # -------- Independent posture features --------
+            yaw = abs(nose[0] - shoulder_mid[0])       # head left/right
+            pitch = abs(nose[1] - shoulder_mid[1])     # head up/down
+            forward = np.linalg.norm(nose - shoulder_mid)
+            shoulder_diff = abs(l_shoulder[1] - r_shoulder[1])
 
-            # --- Calibration ---
             if not self.calibrated:
                 self.calibrate(frame)
 
-            yaw_score = np.clip((yaw - self.base_yaw) / (self.base_yaw + 1e-5), 0, 1)
-            pitch_score = np.clip((pitch - self.base_pitch) / (self.base_pitch + 1e-5), 0, 1)
-            forward_score = np.clip((forward_head - self.base_forward) / (self.base_forward + 1e-5), 0, 1)
-            shoulder_score = np.clip((shoulder_diff - self.base_shoulder_diff) / (self.base_shoulder_diff + 1e-5), 0, 1)
+            yaw_score = np.clip((yaw - self.base_yaw) / (self.base_yaw + 1e-6), 0, 1)
+            pitch_score = np.clip((pitch - self.base_pitch) / (self.base_pitch + 1e-6), 0, 1)
+            forward_score = np.clip((forward - self.base_forward) / (self.base_forward + 1e-6), 0, 1)
+            shoulder_score = np.clip((shoulder_diff - self.base_shoulder_diff) / (self.base_shoulder_diff + 1e-6), 0, 1)
 
-            # --- Weighted Score ---
+            # -------- Weighted score --------
             score = (
                 yaw_score * 0.30 +
                 pitch_score * 0.30 +
@@ -112,39 +119,14 @@ class PostureDetector:
                 shoulder_score * 0.15
             )
 
-            raw_state = "OK" if score < 0.1 else "BAD"
-            current_time = time.time()
+            posture = "OK" if score < 0.10 else "BAD"
 
-            # --- Candidate State Tracking ---
-            if raw_state != self.last_state:
-                if self.candidate_state != raw_state:
-                    self.candidate_state = raw_state
-                    self.state_start_time = current_time
-            else:
-                self.candidate_state = None
-
-            # --- Confirm state only if stable for hold_time ---
-            if self.candidate_state:
-                elapsed = current_time - self.state_start_time
-                if elapsed >= self.hold_time:
-                    self.last_state = self.candidate_state
-                    self.candidate_state = None
-
-            final_state = self.last_state
-
-            # --- Confidence ---
-            if self.candidate_state:
-                elapsed = current_time - self.state_start_time
-                confidence = min(1.0, elapsed / self.hold_time)
-            else:
-                confidence = 1.0
-
-            result["posture"] = final_state
+            result["posture"] = posture
             result["score"] = float(score)
-            result["confidence"] = confidence
+            result["confidence"] = 1.0
 
             return result
 
         except Exception as e:
-            print("Posture error:", e)
+            print("PostureDetector error:", e)
             return {"posture": "UNKNOWN", "score": 0.0, "confidence": 0.0}
