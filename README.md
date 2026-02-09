@@ -5,6 +5,7 @@ This project analyzes sitting posture via webcam or video, detecting unhealthy p
 
 
 **Features:**
+
 Real-time posture detection (Webcam + Video input)  
 Detects bad sitting posture, not just head angle  
 Tracks neck, shoulders, spine, and torso lean  
@@ -17,6 +18,7 @@ Ready for Startup MVP / Industrial prototype
 
 
 **What This Detects:**
+
 Body Aspect Detection 
 Forward Head   
 Neck Tilt (Up / Down)  
@@ -29,6 +31,7 @@ Natural Head Movement Filtering
 
 
 **Real Goal:**
+
 Unlike simple posture apps that only measure head angle, this system evaluates real ergonomic sitting posture, focusing on upper spine health and slouch detection.
 
 
